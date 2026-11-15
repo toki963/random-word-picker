@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f6f7f4" />
+    <meta name="description"
+      content="단어를 모으고 폴더와 태그로 정리한 뒤, 원하는 조건에 맞춰 무작위로 뽑아 보세요." />
+    <title>랜덤 단어 뽑기 — 워드웰</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" id="sidebar" aria-label="주 메뉴">
+        <a class="brand" href="#dashboard" aria-label="워드웰 홈">
+          <span class="brand-mark"
+            aria-hidden="true"><span></span><span></span><span></span><span></span></span>
+          <span
+            class="brand-copy"><strong>워드웰</strong><small>나만의 단어 공간</small></span>
+        </a>
+        <div class="sidebar-label">내 공간</div>
+        <nav class="nav-list">
+          <a href="#dashboard" class="nav-link"
+            data-view="dashboard"><span class="nav-icon">⌂</span>대시보드</a>
+          <a href="#words" class="nav-link"
+            data-view="words"><span class="nav-icon">▤</span>모든 단어<span class="nav-count" id="nav-word-count">0</span></a>
+          <a href="#unfiled" class="nav-link"
+            data-view="unfiled"><span class="nav-icon">↗</span>미분류 단어</a>
+          <a href="#folders" class="nav-link"
+            data-view="folders"><span class="nav-icon">▰</span>폴더<span class="nav-count" id="nav-folder-count">0</span></a>
+          <a href="#tags" class="nav-link"
+            data-view="tags"><span class="nav-icon">◇</span>태그</a>
+        </nav>
+        <div class="sidebar-label sidebar-label-spaced">도구</div>
+        <nav class="nav-list">
+          <a href="#picker" class="nav-link"
+            data-view="picker"><span class="nav-icon">✳</span>랜덤 뽑기</a>
+        </nav>
+        <div class="sidebar-bottom">
+          <div
+            class="sidebar-tip"><span class="tip-spark">✦</span><div><strong>작은 영감 한 조각</strong><p>멋진 아이디어가 단어 하나에서 시작될지도 몰라요.</p></div></div>
+          <a href="#settings" class="nav-link"
+            data-view="settings"><span class="nav-icon">⚙</span>설정</a>
+          <div
+            class="profile-row"><span class="avatar">워</span><span><strong>나의 단어 공간</strong><small>이 기기에 저장됨</small></span><span class="profile-dot"></span></div>
+        </div>
+      </aside>
+
+      <div class="mobile-topbar">
+        <a class="brand"
+          href="#dashboard"><span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></span><span class="brand-copy"><strong>워드웰</strong></span></a>
+        <button class="icon-button" id="menu-toggle" type="button"
+          aria-label="메뉴 열기" aria-expanded="false">☰</button>
+      </div>
+
+      <main class="main-area">
+        <header class="page-topline">
+          <div>
+            <p class="eyebrow" id="topline-eyebrow">나만의 단어 보관함</p>
+            <h1 id="topline-title">단어를 위한 나만의 공간.</h1>
+          </div>
+          <div
+            class="top-actions"><button class="button button-quiet" type="button" data-action="open-settings"><span>↥</span> 백업</button><button class="button button-primary" type="button" data-action="new-word"><span>＋</span> 단어 추가</button></div>
+        </header>
+        <div id="view-root" aria-live="polite"></div>
+      </main>
+    </div>
+
+    <div id="modal-root"></div>
+    <div class="toast-region" id="toast-region" aria-live="polite"
+      aria-atomic="true"></div>
+    <input id="import-file" type="file" accept="application/json,.json"
+      hidden />
+    <script src="./app.js" defer></script>
+  </body>
+</html>
+
