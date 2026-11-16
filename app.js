@@ -734,14 +734,6 @@ function renderWordCard(word) {
         <h3>${escapeHTML(word.name)}</h3>
         <div class="card-actions">
           <button
-            class="icon-button"
-            type="button"
-            aria-label="${escapeHTML(word.name)} 수정"
-            title="단어 수정"
-            data-action="edit-word"
-            data-id="${escapeHTML(word.id)}"
-          >✎</button>
-          <button
             class="icon-button danger"
             type="button"
             aria-label="${escapeHTML(word.name)} 삭제"
