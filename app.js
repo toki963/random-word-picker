@@ -851,7 +851,7 @@ function restoreWordFormDraft(form, draft, selectedFolderIds) {
 function renderWordDetailEditor(word) {
   return `
     <form
-      class="word-detail-editor"
+      class="detail-editor word-detail-editor"
       id="word-detail-editor"
       data-form="word"
       data-inline="true"
@@ -982,14 +982,6 @@ function renderFolders() {
               </a>
               <div class="card-actions folder-card-actions">
                 <button
-                  class="icon-button"
-                  type="button"
-                  title="폴더 수정"
-                  aria-label="${escapeHTML(folder.name)} 폴더 수정"
-                  data-action="edit-folder"
-                  data-id="${escapeHTML(folder.id)}"
-                >✎</button>
-                <button
                   class="icon-button danger"
                   type="button"
                   title="폴더 삭제"
@@ -1021,6 +1013,88 @@ function renderFolders() {
       </div>
       ${folderCards}
     </section>`;
+}
+
+function renderFolderFormFields(folder, idPrefix = "folder") {
+  return `
+    <div class="form-field">
+      <label class="field-label required" for="${idPrefix}-name">폴더 이름</label>
+      <input
+        class="field-input"
+        id="${idPrefix}-name"
+        name="name"
+        required
+        maxlength="100"
+        value="${escapeHTML(folder.name)}"
+        placeholder="예: 이야기 소재"
+      />
+    </div>
+
+    <div class="form-field">
+      <label class="field-label" for="${idPrefix}-description">
+        설명 <span class="optional-label">(선택)</span>
+      </label>
+      <textarea
+        class="field-textarea"
+        id="${idPrefix}-description"
+        name="description"
+        maxlength="700"
+        placeholder="이 폴더에 어떤 단어를 모을까요?"
+      >${escapeHTML(folder.description)}</textarea>
+    </div>
+
+    <div class="form-field">
+      <label class="field-label" for="${idPrefix}-tags">
+        태그 <span class="optional-label">(쉼표 또는 #으로 구분)</span>
+      </label>
+      <input
+        class="field-input"
+        id="${idPrefix}-tags"
+        name="tags"
+        list="${idPrefix}-known-tags"
+        value="${escapeHTML(folder.tags.join(", "))}"
+        placeholder="창작, 즐겨찾기"
+      />
+      <datalist id="${idPrefix}-known-tags">
+        ${allTags().map((tag) => `
+          <option value="${escapeHTML(tag)}"></option>
+        `).join("")}
+      </datalist>
+    </div>
+  `;
+}
+
+function renderFolderDetailEditor(folder) {
+  return `
+    <form
+      class="detail-editor folder-detail-editor"
+      id="folder-detail-editor"
+      data-form="folder"
+      data-inline="true"
+      data-id="${escapeHTML(folder.id)}"
+    >
+      <div class="modal-header">
+        <div>
+          <h2>폴더 수정</h2>
+          <p>폴더 이름과 설명, 태그를 이 화면에서 수정할 수 있어요.</p>
+        </div>
+      </div>
+
+      <div class="modal-body">
+        ${renderFolderFormFields(folder, "folder-detail")}
+      </div>
+
+      <div class="modal-footer">
+        <button
+          class="button button-quiet"
+          type="button"
+          data-action="cancel-folder-edit"
+        >취소</button>
+        <button class="button button-primary" type="submit">
+          변경 사항 저장
+        </button>
+      </div>
+    </form>`;
 }
 
 function renderFolderDetail() {
@@ -1065,7 +1139,7 @@ function renderFolderDetail() {
           <button
             class="button button-quiet button-small"
             type="button"
-            data-action="edit-folder"
+            data-action="focus-folder-edit"
             data-id="${escapeHTML(folder.id)}"
           >폴더 수정</button>
           <button
@@ -1075,6 +1149,7 @@ function renderFolderDetail() {
           >＋ 단어 추가</button>
         </div>
       </div>
+      ${renderFolderDetailEditor(folder)}
       ${wordsMarkup}
     </section>`;
 }
@@ -1629,50 +1704,7 @@ function openModal(kind, id = null) {
           </div>
 
           <div class="modal-body">
-            <div class="form-field">
-              <label class="field-label required" for="folder-name">폴더 이름</label>
-              <input
-                class="field-input"
-                id="folder-name"
-                name="name"
-                required
-                maxlength="100"
-                value="${escapeHTML(folder.name)}"
-                placeholder="예: 이야기 소재"
-              />
-            </div>
-
-            <div class="form-field">
-              <label class="field-label" for="folder-description">
-                설명 <span class="optional-label">(선택)</span>
-              </label>
-              <textarea
-                class="field-textarea"
-                id="folder-description"
-                name="description"
-                maxlength="700"
-                placeholder="이 폴더에 어떤 단어를 모을까요?"
-              >${escapeHTML(folder.description)}</textarea>
-            </div>
-
-            <div class="form-field">
-              <label class="field-label" for="folder-tags">
-                태그 <span class="optional-label">(쉼표 또는 #으로 구분)</span>
-              </label>
-              <input
-                class="field-input"
-                id="folder-tags"
-                name="tags"
-                list="known-tags"
-                value="${escapeHTML(folder.tags.join(", "))}"
-                placeholder="창작, 즐겨찾기"
-              />
-              <datalist id="known-tags">
-                ${allTags().map((tag) => `
-                  <option value="${escapeHTML(tag)}"></option>
-                `).join("")}
-              </datalist>
-            </div>
+            ${renderFolderFormFields(folder)}
           </div>
 
           <div class="modal-footer">
@@ -1815,7 +1847,7 @@ function saveFolderForm(form) {
       item.id === old.id ? folder : item
     );
   } else state.folders.push(folder);
-  closeModal();
+  if (form.dataset.inline !== "true") closeModal();
   saveState();
   render();
   toast(old ? "폴더를 수정했어요." : "폴더를 만들었어요.");
@@ -2381,7 +2413,13 @@ document.addEventListener("click", async (event) => {
     const nameField = $("#word-detail-name");
     nameField?.scrollIntoView({ behavior: "smooth", block: "center" });
     nameField?.focus({ preventScroll: true });
+  } else if (action === "focus-folder-edit") {
+    const nameField = $("#folder-detail-name");
+    nameField?.scrollIntoView({ behavior: "smooth", block: "center" });
+    nameField?.focus({ preventScroll: true });
   } else if (action === "cancel-word-edit") {
+    render();
+  } else if (action === "cancel-folder-edit") {
     render();
   } else if (action === "edit-word") openModal("word", id);
   else if (action === "edit-folder") openModal("folder", id);
