@@ -17,6 +17,7 @@ const titles = {
   picker: ["새로운 아이디어 찾기", "단어가 이끄는 대로 골라 보세요."],
   settings: ["나의 공간", "원하는 방식으로 설정하세요."],
   folder: ["폴더 안의 단어", "이 폴더에 모아 둔 단어예요."],
+  word: ["단어 상세", "단어 정보를 살펴보세요."],
 };
 
 // 앱 데이터는 단어와 폴더를 분리해 저장하고, 연결은 단어의 folderIds로 관리합니다.
@@ -28,6 +29,7 @@ let state = {
 };
 let currentView = "dashboard";
 let currentFolderId = null;
+let currentWordId = null;
 let storageMode = "IndexedDB";
 let dbPromise;
 let saveQueue = Promise.resolve();
@@ -316,17 +318,29 @@ function render() {
     currentFolderId = null;
     history.replaceState(null, "", "#folders");
   }
+  if (currentView === "word" && !getWord(currentWordId)) {
+    currentView = "words";
+    currentWordId = null;
+    history.replaceState(null, "", "#words");
+  }
   const [eyebrow, title] = titles[currentView];
   const currentFolder = currentView === "folder"
     ? getFolder(currentFolderId)
     : null;
-  $("#topline-eyebrow").textContent = currentFolder ? "폴더" : eyebrow;
-  $("#topline-title").textContent = currentFolder?.name || title;
+  const currentWord = currentView === "word" ? getWord(currentWordId) : null;
+  $("#topline-eyebrow").textContent = currentFolder
+    ? "폴더"
+    : currentWord
+    ? "단어 상세"
+    : eyebrow;
+  $("#topline-title").textContent = currentFolder?.name ||
+    currentWord?.name || title;
   $$(".nav-link[data-view]").forEach((link) =>
     link.classList.toggle(
       "active",
       link.dataset.view === currentView ||
-        (currentView === "folder" && link.dataset.view === "folders"),
+        (currentView === "folder" && link.dataset.view === "folders") ||
+        (currentView === "word" && link.dataset.view === "words"),
     )
   );
   $("#nav-word-count").textContent = state.words.length;
@@ -338,6 +352,7 @@ function render() {
   else if (currentView === "unfiled") root.innerHTML = renderWordBrowser(true);
   else if (currentView === "folders") root.innerHTML = renderFolders();
   else if (currentView === "folder") root.innerHTML = renderFolderDetail();
+  else if (currentView === "word") root.innerHTML = renderWordDetail();
   else if (currentView === "tags") root.innerHTML = renderTags();
   else if (currentView === "picker") root.innerHTML = renderPicker();
   else if (currentView === "settings") root.innerHTML = renderSettings();
@@ -687,6 +702,7 @@ function renderWordBrowser(unfiledOnly = false) {
 
 function renderWordCard(word) {
   const folders = folderIdsOf(word).map(getFolder).filter(Boolean);
+  const wordRoute = `#word/${encodeURIComponent(word.id)}`;
   const descriptionMarkup = word.description?.trim()
     ? `<p class="word-card-desc">${escapeHTML(word.description)}</p>`
     : "";
@@ -707,6 +723,13 @@ function renderWordCard(word) {
 
   return `
     <article class="word-card">
+      <a
+        class="word-card-link"
+        href="${escapeHTML(wordRoute)}"
+        data-action="open-word"
+        data-id="${escapeHTML(word.id)}"
+        aria-label="${escapeHTML(word.name)} 단어 상세 열기"
+      ></a>
       <div class="word-card-top">
         <h3>${escapeHTML(word.name)}</h3>
         <div class="card-actions">
@@ -739,6 +762,64 @@ function renderWordCard(word) {
         ${word.tags.length ? `<span>${plural(word.tags.length, "개 태그")}</span>` : ""}
       </div>
     </article>`;
+}
+
+function renderWordDetail() {
+  const word = getWord(currentWordId);
+  if (!word) return "";
+
+  const folders = folderIdsOf(word).map(getFolder).filter(Boolean);
+  const descriptionMarkup = word.description?.trim()
+    ? `<p class="word-detail-description">${escapeHTML(word.description)}</p>`
+    : "";
+  const tagsMarkup = word.tags.length
+    ? `<div class="chip-row">${renderTagChips(word.tags, true)}</div>`
+    : "";
+  const foldersMarkup = folders.length
+    ? `<div class="chip-row word-detail-folders">${folders.map((folder) => `
+        <button
+          type="button"
+          class="folder-chip"
+          title="${escapeHTML(folder.name)} 폴더 열기"
+          data-action="open-folder"
+          data-id="${escapeHTML(folder.id)}"
+        >▰ ${escapeHTML(folder.name)}</button>
+      `).join("")}</div>`
+    : `<div class="chip-row word-detail-folders"><span class="field-help">미분류</span></div>`;
+
+  return `
+    <section class="section word-detail-view">
+      <div class="word-detail-summary">
+        ${descriptionMarkup}
+        ${tagsMarkup}
+        ${foldersMarkup}
+      </div>
+      <div class="folder-detail-toolbar word-detail-toolbar">
+        <div>
+          <h2>단어 정보</h2>
+          <p>${escapeHTML(formatDate(word.updatedAt))}에 수정했어요.</p>
+        </div>
+        <div class="folder-detail-actions">
+          <button
+            class="button button-quiet button-small"
+            type="button"
+            data-action="back-to-words"
+          >← 모든 단어</button>
+          <button
+            class="button button-quiet button-small"
+            type="button"
+            data-action="edit-word"
+            data-id="${escapeHTML(word.id)}"
+          >단어 수정</button>
+          <button
+            class="button button-danger button-small"
+            type="button"
+            data-action="delete-word"
+            data-id="${escapeHTML(word.id)}"
+          >단어 삭제</button>
+        </div>
+      </div>
+    </section>`;
 }
 
 function renderFolders() {
@@ -2133,9 +2214,11 @@ async function handleImport(file) {
 function syncRouteFromHash() {
   const hash = location.hash.slice(1);
   const folderRoute = hash.match(/^folder\/(.*)$/);
+  const wordRoute = hash.match(/^word\/(.*)$/);
 
   if (folderRoute) {
     currentView = "folder";
+    currentWordId = null;
     try {
       currentFolderId = decodeURIComponent(folderRoute[1]);
     } catch {
@@ -2145,8 +2228,21 @@ function syncRouteFromHash() {
     return;
   }
 
+  if (wordRoute) {
+    currentView = "word";
+    currentFolderId = null;
+    browser.folderId = "all";
+    try {
+      currentWordId = decodeURIComponent(wordRoute[1]);
+    } catch {
+      currentWordId = "";
+    }
+    return;
+  }
+
   currentView = hash || "dashboard";
   currentFolderId = null;
+  currentWordId = null;
 }
 
 function navigateToFolder(id) {
@@ -2155,8 +2251,25 @@ function navigateToFolder(id) {
 
   currentView = "folder";
   currentFolderId = folder.id;
+  currentWordId = null;
   browser.folderId = folder.id;
   const route = `#folder/${encodeURIComponent(folder.id)}`;
+  if (location.hash !== route) location.hash = route;
+  else render();
+
+  $("#sidebar").classList.remove("open");
+  $("#menu-toggle").setAttribute("aria-expanded", "false");
+}
+
+function navigateToWord(id) {
+  const word = getWord(id);
+  if (!word) return;
+
+  currentView = "word";
+  currentFolderId = null;
+  currentWordId = word.id;
+  browser.folderId = "all";
+  const route = `#word/${encodeURIComponent(word.id)}`;
   if (location.hash !== route) location.hash = route;
   else render();
 
@@ -2170,6 +2283,7 @@ function navigate(view) {
   else {
     currentView = view;
     currentFolderId = null;
+    currentWordId = null;
     render();
   }
   $("#sidebar").classList.remove("open");
@@ -2222,8 +2336,13 @@ document.addEventListener("click", async (event) => {
   else if (action === "open-folder") {
     event.preventDefault();
     navigateToFolder(id);
+  } else if (action === "open-word") {
+    event.preventDefault();
+    navigateToWord(id);
   } else if (action === "back-to-folders") {
     navigate("folders");
+  } else if (action === "back-to-words") {
+    navigate("words");
   } else if (action === "filter-tag") {
     browser.tagNames = [target.dataset.tag];
     browser.tagLogic = "and";
