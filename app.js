@@ -23,7 +23,7 @@ let state = {
   version: APP_VERSION,
   words: [],
   folders: [],
-  settings: { theme: "light" },
+  settings: { theme: "light", lastWordFolderIds: [] },
 };
 let currentView = "dashboard";
 let storageMode = "IndexedDB";
@@ -80,7 +80,7 @@ const uniqueTags = (values) => {
     },
   );
 };
-const parseTags = (value) => uniqueTags(String(value || "").split(/[,;\n]/));
+const parseTags = (value) => uniqueTags(String(value || "").split(/[,;#\n]/));
 const getFolder = (id) => state.folders.find((folder) => folder.id === id);
 const getWord = (id) => state.words.find((word) => word.id === id);
 const folderIdsOf = (
@@ -114,7 +114,12 @@ function normalizeState(input) {
     version: APP_VERSION,
     words: [],
     folders: [],
-    settings: { theme: input?.settings?.theme === "dark" ? "dark" : "light" },
+    settings: {
+      theme: input?.settings?.theme === "dark" ? "dark" : "light",
+      lastWordFolderIds: Array.isArray(input?.settings?.lastWordFolderIds)
+        ? input.settings.lastWordFolderIds.map(String)
+        : [],
+    },
   };
   if (!input || !Array.isArray(input.words) || !Array.isArray(input.folders)) {
     return safe;
@@ -297,7 +302,7 @@ function applyTheme() {
   document.body.classList.toggle("dark", isDark);
   $("meta[name='theme-color']")?.setAttribute(
     "content",
-    isDark ? "#171d1a" : "#f6f7f4",
+    isDark ? "#080b0a" : "#f6f7f4",
   );
 }
 
@@ -1163,7 +1168,9 @@ function renderSettings() {
           <div class="settings-action">
             <div>
               <strong>전체 데이터 내보내기</strong>
-              <small>단어, 폴더, 태그와 연결 정보를 JSON 파일로 저장합니다.</small>
+              <small>
+                단어, 폴더, 태그와 연결 정보를 JSON 또는 Excel 파일로 저장합니다.
+              </small>
             </div>
             <button
               class="button button-quiet button-small"
@@ -1188,14 +1195,33 @@ function renderSettings() {
             <div>
               <strong>백업 가져오기</strong>
               <small>
-                워드웰 JSON 백업 파일을 선택하세요. 잘못된 항목이나 끊어진 폴더 연결은 제외됩니다.
+                워드웰 JSON 또는 Excel 백업 파일을 선택하세요. 잘못된 항목이나 끊어진 폴더 연결은 제외됩니다.
               </small>
             </div>
             <button
               class="button button-quiet button-small"
               type="button"
               data-action="import-data"
-            >↑ JSON 가져오기</button>
+            >↑ 백업 가져오기</button>
+          </div>
+
+          <div class="settings-action">
+            <div>
+              <strong>Excel 백업</strong>
+              <small>단어, 폴더, 태그와 연결 정보를 워크시트별로 저장합니다.</small>
+            </div>
+            <div class="settings-button-group">
+              <button
+                class="button button-quiet button-small"
+                type="button"
+                data-action="export-excel"
+              >↓ Excel 내보내기</button>
+              <button
+                class="button button-quiet button-small"
+                type="button"
+                data-action="import-data"
+              >↑ Excel 가져오기</button>
+            </div>
           </div>
         </section>
 
@@ -1255,8 +1281,21 @@ function openModal(kind, id = null) {
   const existing = id ? (kind === "word" ? getWord(id) : getFolder(id)) : null;
 
   if (kind === "word") {
-    const word = existing ||
-      { name: "", description: "", tags: [], folderIds: [] };
+    const lastFolderIds = Array.isArray(state.settings.lastWordFolderIds)
+      ? state.settings.lastWordFolderIds.filter((folderId) =>
+        !!getFolder(folderId)
+      )
+      : [];
+    // 폴더 안에서 단어를 추가하면 그 폴더를 우선하고, 아니면 마지막 선택을 이어갑니다.
+    const defaultFolderIds = getFolder(browser.folderId)
+      ? [browser.folderId]
+      : lastFolderIds;
+    const word = existing || {
+      name: "",
+      description: "",
+      tags: [],
+      folderIds: defaultFolderIds,
+    };
     const folderChecks = state.folders.length
       ? state.folders.map((folder) =>
         `
@@ -1321,7 +1360,7 @@ function openModal(kind, id = null) {
 
             <div class="form-field">
               <label class="field-label" for="word-tags">
-                태그 <span class="optional-label">(쉼표로 구분)</span>
+                태그 <span class="optional-label">(쉼표 또는 #으로 구분)</span>
               </label>
               <input
                 class="field-input"
@@ -1329,7 +1368,7 @@ function openModal(kind, id = null) {
                 name="tags"
                 list="known-tags"
                 value="${escapeHTML(word.tags.join(", "))}"
-                placeholder="언어, 감정, 자연"
+                placeholder="언어, 감정 # 자연"
               />
               <datalist id="known-tags">
                 ${allTags().map((tag) => `
@@ -1337,7 +1376,7 @@ function openModal(kind, id = null) {
                 `).join("")}
               </datalist>
               <small>
-                대소문자가 달라도 같은 태그로 취급하며, 폴더와 태그를 공유할 수 있어요.
+                쉼표, #, 줄바꿈으로 나눠 입력할 수 있어요. 대소문자가 달라도 같은 태그로 취급합니다.
               </small>
             </div>
 
@@ -1417,7 +1456,7 @@ function openModal(kind, id = null) {
 
             <div class="form-field">
               <label class="field-label" for="folder-tags">
-                태그 <span class="optional-label">(쉼표로 구분)</span>
+                태그 <span class="optional-label">(쉼표 또는 #으로 구분)</span>
               </label>
               <input
                 class="field-input"
@@ -1544,6 +1583,7 @@ function saveWordForm(form) {
   if (old) {
     state.words = state.words.map((item) => item.id === old.id ? word : item);
   } else state.words.unshift(word);
+  state.settings.lastWordFolderIds = word.folderIds;
   closeModal();
   saveState();
   render();
@@ -1765,6 +1805,106 @@ function exportData() {
   toast("JSON 백업 파일을 준비했어요.");
 }
 
+// Excel 통합 문서에는 단어, 폴더, 관계를 별도 시트로 나눠 담습니다.
+function exportExcel() {
+  if (!globalThis.XLSX) {
+    toast("Excel 기능을 불러오지 못했어요. 인터넷 연결을 확인해 주세요.", "error");
+    return;
+  }
+
+  const workbook = XLSX.utils.book_new();
+  const sheets = [
+    ["단어", ["ID", "단어", "설명", "태그", "폴더 ID", "생성일", "수정일"],
+      state.words.map((word) => [
+        word.id,
+        word.name,
+        word.description,
+        word.tags.join(", "),
+        folderIdsOf(word).join(", "),
+        word.createdAt,
+        word.updatedAt,
+      ])],
+    ["폴더", ["ID", "폴더", "설명", "태그", "생성일", "수정일"],
+      state.folders.map((folder) => [
+        folder.id,
+        folder.name,
+        folder.description,
+        folder.tags.join(", "),
+        folder.createdAt,
+        folder.updatedAt,
+      ])],
+    ["연결", ["단어 ID", "폴더 ID"],
+      state.words.flatMap((word) =>
+        folderIdsOf(word).map((folderId) => [word.id, folderId])
+      )],
+  ];
+
+  for (const [name, headers, rows] of sheets) {
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.aoa_to_sheet([headers, ...rows]),
+      name,
+    );
+  }
+
+  XLSX.writeFile(
+    workbook,
+    `워드웰-백업-${new Date().toISOString().slice(0, 10)}.xlsx`,
+  );
+  toast("Excel 백업 파일을 준비했어요.");
+}
+
+// 워크시트의 각 행을 기존 JSON 가져오기 형식으로 바꿔 검증과 병합을 재사용합니다.
+function importExcel(buffer) {
+  if (!globalThis.XLSX) {
+    throw new Error("Excel 기능을 불러오지 못했어요. 인터넷 연결을 확인해 주세요.");
+  }
+
+  const workbook = XLSX.read(buffer, { type: "array" });
+  const wordSheet = workbook.Sheets["단어"];
+  const folderSheet = workbook.Sheets["폴더"];
+  if (!wordSheet || !folderSheet) {
+    throw new Error("Excel 파일에 ‘단어’와 ‘폴더’ 시트가 있어야 합니다.");
+  }
+
+  const rows = (sheet) => XLSX.utils.sheet_to_json(sheet, { defval: "" });
+  const cell = (row, ...keys) => {
+    const key = keys.find((name) => row[name] !== undefined && row[name] !== "");
+    return key ? row[key] : "";
+  };
+  const list = (value) =>
+    String(value || "").split(/[,;\n]/).map((item) => item.trim()).filter(
+      Boolean,
+    );
+
+  const folders = rows(folderSheet).map((row) => ({
+    id: String(cell(row, "ID", "id") || ""),
+    name: String(cell(row, "폴더", "name", "이름") || ""),
+    description: String(cell(row, "설명", "description") || ""),
+    tags: parseTags(cell(row, "태그", "tags")),
+    createdAt: cell(row, "생성일", "createdAt", "created_at"),
+    updatedAt: cell(row, "수정일", "updatedAt", "updated_at"),
+  }));
+  const words = rows(wordSheet).map((row) => ({
+    id: String(cell(row, "ID", "id") || ""),
+    name: String(cell(row, "단어", "name", "이름") || ""),
+    description: String(cell(row, "설명", "description") || ""),
+    tags: parseTags(cell(row, "태그", "tags")),
+    folderIds: list(cell(row, "폴더 ID", "folderIds", "folder_ids")),
+    createdAt: cell(row, "생성일", "createdAt", "created_at"),
+    updatedAt: cell(row, "수정일", "updatedAt", "updated_at"),
+  }));
+  const relationshipSheet = workbook.Sheets["연결"];
+  const relationships = relationshipSheet
+    ? rows(relationshipSheet).map((row) => ({
+      wordId: String(cell(row, "단어 ID", "wordId", "word_id") || ""),
+      folderId: String(cell(row, "폴더 ID", "folderId", "folder_id") || ""),
+    }))
+    : [];
+
+  return { words, folders, relationships };
+}
+
 // 가져오기 중 ID 충돌을 새 ID로 바꾸고, 관계는 가져온 폴더·단어 안에서 다시 연결합니다.
 function importRecords(raw, strategy) {
   if (
@@ -1874,7 +2014,11 @@ function importRecords(raw, strategy) {
 async function handleImport(file) {
   if (!file) return;
   try {
-    const raw = JSON.parse(await file.text());
+    const isExcel = /\.xlsx?$/i.test(file.name) ||
+      file.type.includes("spreadsheet");
+    const raw = isExcel
+      ? importExcel(await file.arrayBuffer())
+      : JSON.parse(await file.text());
     const strategy = $("#import-strategy")?.value || "merge";
     if (!raw || !Array.isArray(raw.words) || !Array.isArray(raw.folders)) {
       throw new Error("파일에 단어 목록과 폴더 목록이 있어야 합니다.");
@@ -1995,6 +2139,7 @@ document.addEventListener("click", async (event) => {
     );
     toast("뽑은 단어를 파일로 저장했어요.");
   } else if (action === "export-data") exportData();
+  else if (action === "export-excel") exportExcel();
   else if (action === "import-data") $("#import-file").click();
   else if (action === "clear-library") {
     if (
