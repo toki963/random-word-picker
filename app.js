@@ -16,6 +16,7 @@ const titles = {
   tags: ["나만의 분류", "태그로 단어를 탐색해 보세요."],
   picker: ["새로운 아이디어 찾기", "단어가 이끄는 대로 골라 보세요."],
   settings: ["나의 공간", "원하는 방식으로 설정하세요."],
+  folder: ["폴더 안의 단어", "이 폴더에 모아 둔 단어예요."],
 };
 
 // 앱 데이터는 단어와 폴더를 분리해 저장하고, 연결은 단어의 folderIds로 관리합니다.
@@ -26,6 +27,7 @@ let state = {
   settings: { theme: "light", lastWordFolderIds: [] },
 };
 let currentView = "dashboard";
+let currentFolderId = null;
 let storageMode = "IndexedDB";
 let dbPromise;
 let saveQueue = Promise.resolve();
@@ -309,11 +311,23 @@ function applyTheme() {
 // 현재 경로에 맞는 화면만 다시 그립니다. 각 화면은 아래 렌더 함수에서 만듭니다.
 function render() {
   if (!titles[currentView]) currentView = "dashboard";
+  if (currentView === "folder" && !getFolder(currentFolderId)) {
+    currentView = "folders";
+    currentFolderId = null;
+    history.replaceState(null, "", "#folders");
+  }
   const [eyebrow, title] = titles[currentView];
-  $("#topline-eyebrow").textContent = eyebrow;
-  $("#topline-title").textContent = title;
+  const currentFolder = currentView === "folder"
+    ? getFolder(currentFolderId)
+    : null;
+  $("#topline-eyebrow").textContent = currentFolder ? "폴더" : eyebrow;
+  $("#topline-title").textContent = currentFolder?.name || title;
   $$(".nav-link[data-view]").forEach((link) =>
-    link.classList.toggle("active", link.dataset.view === currentView)
+    link.classList.toggle(
+      "active",
+      link.dataset.view === currentView ||
+        (currentView === "folder" && link.dataset.view === "folders"),
+    )
   );
   $("#nav-word-count").textContent = state.words.length;
   $("#nav-folder-count").textContent = state.folders.length;
@@ -323,13 +337,14 @@ function render() {
   else if (currentView === "words") root.innerHTML = renderWordBrowser(false);
   else if (currentView === "unfiled") root.innerHTML = renderWordBrowser(true);
   else if (currentView === "folders") root.innerHTML = renderFolders();
+  else if (currentView === "folder") root.innerHTML = renderFolderDetail();
   else if (currentView === "tags") root.innerHTML = renderTags();
   else if (currentView === "picker") root.innerHTML = renderPicker();
   else if (currentView === "settings") root.innerHTML = renderSettings();
 }
 
 function renderTagChips(tags, clickable = false) {
-  if (!tags?.length) return `<span class="field-help">태그 없음</span>`;
+  if (!tags?.length) return "";
   return tags.map((tag) =>
     clickable
       ? `<button type="button" class="tag-chip clickable" data-action="filter-tag" data-tag="${
@@ -360,10 +375,11 @@ function renderDashboard() {
             <span class="word-orb">${escapeHTML(word.name.trim().slice(0, 1).toUpperCase())}</span>
             <div class="word-row-content">
               <div class="word-row-title">${escapeHTML(word.name)}</div>
-              <p class="word-row-desc">${escapeHTML(
-                word.description ||
-                  (word.tags.length ? word.tags.join(" · ") : "설명이 없습니다."),
-              )}</p>
+              ${word.description?.trim()
+                ? `<p class="word-row-desc">${escapeHTML(word.description)}</p>`
+                : word.tags.length
+                ? `<div class="chip-row word-row-tags">${renderTagChips(word.tags, true)}</div>`
+                : ""}
             </div>
             <div class="word-row-side">
               <small>${escapeHTML(formatDate(word.updatedAt))}</small>
@@ -671,12 +687,12 @@ function renderWordBrowser(unfiledOnly = false) {
 
 function renderWordCard(word) {
   const folders = folderIdsOf(word).map(getFolder).filter(Boolean);
-  const desc = word.description
-    ? escapeHTML(word.description)
-    : "설명을 추가하지 않았어요.";
-  const tagChips = word.tags.length
-    ? renderTagChips(word.tags, true)
-    : `<span class="field-help">태그 없음</span>`;
+  const descriptionMarkup = word.description?.trim()
+    ? `<p class="word-card-desc">${escapeHTML(word.description)}</p>`
+    : "";
+  const tagMarkup = word.tags.length
+    ? `<div class="chip-row">${renderTagChips(word.tags, true)}</div>`
+    : "";
   const folderChips = folders.length
     ? folders.map((folder) => `
         <button
@@ -713,14 +729,14 @@ function renderWordCard(word) {
         </div>
       </div>
 
-      <p class="word-card-desc">${desc}</p>
-      <div class="chip-row">${tagChips}</div>
-      <div class="card-divider"></div>
+      ${descriptionMarkup}
+      ${tagMarkup}
+      ${folders.length ? `<div class="card-divider"></div>` : ""}
       <div class="chip-row">${folderChips}</div>
 
       <div class="card-foot word-card-foot">
         <span>${escapeHTML(formatDate(word.updatedAt))} 수정</span>
-        <span>${plural(word.tags.length, "개 태그")}</span>
+        ${word.tags.length ? `<span>${plural(word.tags.length, "개 태그")}</span>` : ""}
       </div>
     </article>`;
 }
@@ -732,54 +748,53 @@ function renderFolders() {
   const folderCards = folders.length
     ? `<div class="cards-grid">
         ${folders.map((folder) => {
-          const folderTags = folder.tags.length
-            ? renderTagChips(folder.tags, true)
-            : `<span class="field-help">태그 없음</span>`;
+          const descriptionMarkup = folder.description?.trim()
+            ? `<p class="folder-description">${escapeHTML(folder.description)}</p>`
+            : "";
+          const tagsMarkup = folder.tags.length
+            ? `<div class="chip-row">${renderTagChips(folder.tags)}</div>`
+            : "";
+          const folderRoute = `#folder/${encodeURIComponent(folder.id)}`;
 
           return `
             <article class="folder-card">
-              <div class="folder-card-top">
-                <span class="folder-icon">▰</span>
-                <div class="folder-card-heading">
-                  <h3>${escapeHTML(folder.name)}</h3>
-                  <div class="folder-meta">
-                    <strong>${folderCount(folder)}</strong>
-                    <span>개 단어</span>
+              <a
+                class="folder-card-main"
+                href="${escapeHTML(folderRoute)}"
+                data-action="open-folder"
+                data-id="${escapeHTML(folder.id)}"
+                aria-label="${escapeHTML(folder.name)} 폴더 열기"
+              >
+                <div class="folder-card-top">
+                  <span class="folder-icon">▰</span>
+                  <div class="folder-card-heading">
+                    <h3>${escapeHTML(folder.name)}</h3>
+                    <div class="folder-meta">
+                      <strong>${folderCount(folder)}</strong>
+                      <span>개 단어</span>
+                    </div>
                   </div>
                 </div>
-                <div class="card-actions">
-                  <button
-                    class="icon-button"
-                    type="button"
-                    title="폴더 수정"
-                    aria-label="${escapeHTML(folder.name)} 폴더 수정"
-                    data-action="edit-folder"
-                    data-id="${escapeHTML(folder.id)}"
-                  >✎</button>
-                  <button
-                    class="icon-button danger"
-                    type="button"
-                    title="폴더 삭제"
-                    aria-label="${escapeHTML(folder.name)} 폴더 삭제"
-                    data-action="delete-folder"
-                    data-id="${escapeHTML(folder.id)}"
-                  >×</button>
-                </div>
-              </div>
-
-              <p class="folder-description">
-                ${escapeHTML(folder.description || "아이디어를 모아 두는 폴더예요.")}
-              </p>
-              <div class="chip-row">${folderTags}</div>
-
-              <div class="folder-actions">
-                <span class="field-help">${escapeHTML(formatDate(folder.createdAt))} 생성</span>
+                ${descriptionMarkup}
+                ${tagsMarkup}
+              </a>
+              <div class="card-actions folder-card-actions">
                 <button
-                  class="text-link"
+                  class="icon-button"
                   type="button"
-                  data-action="open-folder"
+                  title="폴더 수정"
+                  aria-label="${escapeHTML(folder.name)} 폴더 수정"
+                  data-action="edit-folder"
                   data-id="${escapeHTML(folder.id)}"
-                >단어 보기 →</button>
+                >✎</button>
+                <button
+                  class="icon-button danger"
+                  type="button"
+                  title="폴더 삭제"
+                  aria-label="${escapeHTML(folder.name)} 폴더 삭제"
+                  data-action="delete-folder"
+                  data-id="${escapeHTML(folder.id)}"
+                >×</button>
               </div>
             </article>`;
         }).join("")}
@@ -803,6 +818,62 @@ function renderFolders() {
         </button>
       </div>
       ${folderCards}
+    </section>`;
+}
+
+function renderFolderDetail() {
+  const folder = getFolder(currentFolderId);
+  if (!folder) return "";
+
+  const words = state.words.filter((word) =>
+    folderIdsOf(word).includes(folder.id)
+  ).sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+  const descriptionMarkup = folder.description?.trim()
+    ? `<p class="folder-detail-description">${escapeHTML(folder.description)}</p>`
+    : "";
+  const tagsMarkup = folder.tags.length
+    ? `<div class="chip-row folder-detail-tags">${renderTagChips(folder.tags, true)}</div>`
+    : "";
+  const metadataMarkup = descriptionMarkup || tagsMarkup
+    ? `<div class="folder-detail-summary">${descriptionMarkup}${tagsMarkup}</div>`
+    : "";
+  const wordsMarkup = words.length
+    ? `<div class="cards-grid">${words.map(renderWordCard).join("\n")}</div>`
+    : emptyState(
+      "아직 단어가 없어요",
+      "이 폴더에 첫 단어를 추가해 보세요.",
+      "new-word",
+      "＋ 단어 추가",
+    );
+
+  return `
+    <section class="section folder-detail-view">
+      ${metadataMarkup}
+      <div class="folder-detail-toolbar">
+        <div>
+          <h2>단어 ${words.length}개</h2>
+          <p>이 폴더에 담긴 단어만 모아 보여줘요.</p>
+        </div>
+        <div class="folder-detail-actions">
+          <button
+            class="button button-quiet button-small"
+            type="button"
+            data-action="back-to-folders"
+          >← 폴더 목록</button>
+          <button
+            class="button button-quiet button-small"
+            type="button"
+            data-action="edit-folder"
+            data-id="${escapeHTML(folder.id)}"
+          >폴더 수정</button>
+          <button
+            class="button button-primary button-small"
+            type="button"
+            data-action="new-word"
+          >＋ 단어 추가</button>
+        </div>
+      </div>
+      ${wordsMarkup}
     </section>`;
 }
 
@@ -1058,7 +1129,9 @@ function renderPicker() {
             <span class="result-number">${String(index + 1).padStart(2, "0")}</span>
             <div class="result-copy">
               <strong>${escapeHTML(word.name)}</strong>
-              <small>${escapeHTML(word.tags.length ? word.tags.join(" · ") : "태그 없음")}</small>
+              ${word.tags.length
+                ? `<small>${escapeHTML(word.tags.join(" · "))}</small>`
+                : ""}
             </div>
           </article>
         `).join("")}
@@ -1299,7 +1372,7 @@ function openModal(kind, id = null) {
     const folderChecks = state.folders.length
       ? state.folders.map((folder) =>
         `
-          <label class="checkline">
+          <label class="checkline folder-choice">
             <input
               type="checkbox"
               name="folderIds"
@@ -2057,11 +2130,46 @@ async function handleImport(file) {
   }
 }
 
+function syncRouteFromHash() {
+  const hash = location.hash.slice(1);
+  const folderRoute = hash.match(/^folder\/(.*)$/);
+
+  if (folderRoute) {
+    currentView = "folder";
+    try {
+      currentFolderId = decodeURIComponent(folderRoute[1]);
+    } catch {
+      currentFolderId = "";
+    }
+    if (getFolder(currentFolderId)) browser.folderId = currentFolderId;
+    return;
+  }
+
+  currentView = hash || "dashboard";
+  currentFolderId = null;
+}
+
+function navigateToFolder(id) {
+  const folder = getFolder(id);
+  if (!folder) return;
+
+  currentView = "folder";
+  currentFolderId = folder.id;
+  browser.folderId = folder.id;
+  const route = `#folder/${encodeURIComponent(folder.id)}`;
+  if (location.hash !== route) location.hash = route;
+  else render();
+
+  $("#sidebar").classList.remove("open");
+  $("#menu-toggle").setAttribute("aria-expanded", "false");
+}
+
 function navigate(view) {
   if (!titles[view]) return;
   if (location.hash !== `#${view}`) location.hash = view;
   else {
     currentView = view;
+    currentFolderId = null;
     render();
   }
   $("#sidebar").classList.remove("open");
@@ -2072,8 +2180,13 @@ function navigate(view) {
 document.addEventListener("click", async (event) => {
   const navLink = event.target.closest(".nav-link[data-view]");
   if (navLink) {
-    $("#sidebar").classList.remove("open");
-    $("#menu-toggle").setAttribute("aria-expanded", "false");
+    event.preventDefault();
+    if (navLink.dataset.view === "words") browser.folderId = "all";
+    else if (navLink.dataset.view === "unfiled") {
+      browser.folderId = "unfiled";
+    }
+    navigate(navLink.dataset.view);
+    return;
   }
   const target = event.target.closest("[data-action]");
   if (!target) return;
@@ -2107,8 +2220,10 @@ document.addEventListener("click", async (event) => {
   else if (action === "close-modal") closeModal();
   else if (action === "backdrop-close" && event.target === target) closeModal();
   else if (action === "open-folder") {
-    browser.folderId = id;
-    navigate("words");
+    event.preventDefault();
+    navigateToFolder(id);
+  } else if (action === "back-to-folders") {
+    navigate("folders");
   } else if (action === "filter-tag") {
     browser.tagNames = [target.dataset.tag];
     browser.tagLogic = "and";
@@ -2291,7 +2406,7 @@ document.addEventListener("submit", (event) => {
         $("#word-tags").value = wordDraft.tags;
         const checks = wordForm.querySelector(".folder-checks");
         checks.innerHTML = state.folders.map((folder) =>
-          `<label class="checkline"><input type="checkbox" name="folderIds" value="${
+          `<label class="checkline folder-choice"><input type="checkbox" name="folderIds" value="${
             escapeHTML(folder.id)
           }" ${selected.includes(folder.id) ? "checked" : ""} /><span>${
             escapeHTML(folder.name)
@@ -2312,7 +2427,7 @@ document.addEventListener("submit", (event) => {
 });
 
 window.addEventListener("hashchange", () => {
-  currentView = location.hash.slice(1) || "dashboard";
+  syncRouteFromHash();
   render();
 });
 
@@ -2327,7 +2442,7 @@ document.addEventListener("keydown", (event) => {
 
 async function init() {
   await loadState();
-  currentView = location.hash.slice(1) || "dashboard";
+  syncRouteFromHash();
   if (!location.hash) history.replaceState(null, "", "#dashboard");
   render();
 }
