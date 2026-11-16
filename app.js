@@ -30,7 +30,6 @@ let state = {
 let currentView = "dashboard";
 let currentFolderId = null;
 let currentWordId = null;
-let wordDetailEditing = false;
 let storageMode = "IndexedDB";
 let dbPromise;
 let saveQueue = Promise.resolve();
@@ -322,7 +321,6 @@ function render() {
   if (currentView === "word" && !getWord(currentWordId)) {
     currentView = "words";
     currentWordId = null;
-    wordDetailEditing = false;
     history.replaceState(null, "", "#words");
   }
   const [eyebrow, title] = titles[currentView];
@@ -862,6 +860,7 @@ function renderWordDetailEditor(word) {
   return `
     <form
       class="word-detail-editor"
+      id="word-detail-editor"
       data-form="word"
       data-inline="true"
       data-id="${escapeHTML(word.id)}"
@@ -936,9 +935,8 @@ function renderWordDetail() {
           <button
             class="button button-quiet button-small"
             type="button"
-            data-action="edit-word-inline"
+            data-action="focus-word-edit"
             data-id="${escapeHTML(word.id)}"
-            ${wordDetailEditing ? "hidden" : ""}
           >단어 수정</button>
           <button
             class="button button-danger button-small"
@@ -948,7 +946,8 @@ function renderWordDetail() {
           >단어 삭제</button>
         </div>
       </div>
-      ${wordDetailEditing ? renderWordDetailEditor(word) : summaryMarkup}
+      ${summaryMarkup}
+      ${renderWordDetailEditor(word)}
     </section>`;
 }
 
@@ -1795,8 +1794,7 @@ function saveWordForm(form) {
   } else state.words.unshift(word);
   state.settings.lastWordFolderIds = word.folderIds;
   const inlineEdit = form.dataset.inline === "true";
-  if (inlineEdit) wordDetailEditing = false;
-  else closeModal();
+  if (!inlineEdit) closeModal();
   saveState();
   render();
   toast(old ? "단어를 수정했어요." : "보관함에 단어를 추가했어요.");
@@ -2270,7 +2268,6 @@ async function handleImport(file) {
 }
 
 function syncRouteFromHash() {
-  wordDetailEditing = false;
   const hash = location.hash.slice(1);
   const folderRoute = hash.match(/^folder\/(.*)$/);
   const wordRoute = hash.match(/^word\/(.*)$/);
@@ -2311,7 +2308,6 @@ function navigateToFolder(id) {
   currentView = "folder";
   currentFolderId = folder.id;
   currentWordId = null;
-  wordDetailEditing = false;
   browser.folderId = folder.id;
   const route = `#folder/${encodeURIComponent(folder.id)}`;
   if (location.hash !== route) location.hash = route;
@@ -2328,7 +2324,6 @@ function navigateToWord(id) {
   currentView = "word";
   currentFolderId = null;
   currentWordId = word.id;
-  wordDetailEditing = false;
   browser.folderId = "all";
   const route = `#word/${encodeURIComponent(word.id)}`;
   if (location.hash !== route) location.hash = route;
@@ -2340,7 +2335,6 @@ function navigateToWord(id) {
 
 function navigate(view) {
   if (!titles[view]) return;
-  wordDetailEditing = false;
   if (location.hash !== `#${view}`) location.hash = view;
   else {
     currentView = view;
@@ -2391,12 +2385,11 @@ document.addEventListener("click", async (event) => {
       folderForm.dataset.wordTags = tags || "";
       folderForm.dataset.selectedFolders = selected.join(",");
     }, 0);
-  } else if (action === "edit-word-inline") {
-    wordDetailEditing = true;
-    render();
-    $("#word-detail-name")?.focus();
+  } else if (action === "focus-word-edit") {
+    const nameField = $("#word-detail-name");
+    nameField?.scrollIntoView({ behavior: "smooth", block: "center" });
+    nameField?.focus({ preventScroll: true });
   } else if (action === "cancel-word-edit") {
-    wordDetailEditing = false;
     render();
   } else if (action === "edit-word") openModal("word", id);
   else if (action === "edit-folder") openModal("folder", id);
@@ -2593,7 +2586,6 @@ document.addEventListener("submit", (event) => {
       state.folders.push(created);
       saveState();
       if (wordDraft.inline) {
-        wordDetailEditing = true;
         render();
         restoreWordFormDraft(
           $("form[data-form=word]"),
