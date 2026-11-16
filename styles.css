@@ -904,6 +904,25 @@ h1 {
   border-radius: 11px;
   background: var(--surface);
 }
+.word-detail-editor {
+  max-width: 720px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface);
+}
+.word-detail-editor .modal-header {
+  padding: 18px 20px 14px;
+}
+.word-detail-editor .modal-body {
+  padding: 17px 20px 20px;
+}
+.word-detail-editor .modal-footer {
+  padding: 13px 20px 18px;
+}
+.word-detail-editor .form-field:last-child {
+  margin-bottom: 0;
+}
 .folder-detail-description {
   margin: 0;
   color: var(--muted);
@@ -1584,6 +1603,7 @@ body.dark .folder-card,
 body.dark .tag-card,
 body.dark .settings-card,
 body.dark .modal,
+body.dark .word-detail-editor,
 body.dark .button-quiet,
 body.dark .result-card,
 body.dark .collection-chip,

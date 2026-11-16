@@ -30,6 +30,7 @@ let state = {
 let currentView = "dashboard";
 let currentFolderId = null;
 let currentWordId = null;
+let wordDetailEditing = false;
 let storageMode = "IndexedDB";
 let dbPromise;
 let saveQueue = Promise.resolve();
@@ -321,6 +322,7 @@ function render() {
   if (currentView === "word" && !getWord(currentWordId)) {
     currentView = "words";
     currentWordId = null;
+    wordDetailEditing = false;
     history.replaceState(null, "", "#words");
   }
   const [eyebrow, title] = titles[currentView];
@@ -764,6 +766,130 @@ function renderWordCard(word) {
     </article>`;
 }
 
+function renderWordFolderChoices(selectedFolderIds = []) {
+  return state.folders.length
+    ? state.folders.map((folder) => `
+        <label class="checkline folder-choice">
+          <input
+            type="checkbox"
+            name="folderIds"
+            value="${escapeHTML(folder.id)}"
+            ${selectedFolderIds.includes(folder.id) ? "checked" : ""}
+          />
+          <span>${escapeHTML(folder.name)}</span>
+        </label>
+      `).join("")
+    : `<span class="field-help">이 단어는 미분류로 저장돼요. 나중에 폴더에 추가할 수 있습니다.</span>`;
+}
+
+function renderWordFormFields(word, idPrefix = "word", autofocus = false) {
+  const folderChecks = renderWordFolderChoices(folderIdsOf(word));
+
+  return `
+    <div class="form-field">
+      <label class="field-label required" for="${idPrefix}-name">단어</label>
+      <input
+        class="field-input"
+        id="${idPrefix}-name"
+        name="name"
+        required
+        maxlength="120"
+        ${autofocus ? "autofocus" : ""}
+        value="${escapeHTML(word.name)}"
+        placeholder="예: 설렘"
+      />
+    </div>
+
+    <div class="form-field">
+      <label class="field-label" for="${idPrefix}-description">
+        설명 <span class="optional-label">(선택)</span>
+      </label>
+      <textarea
+        class="field-textarea"
+        id="${idPrefix}-description"
+        name="description"
+        maxlength="1000"
+        placeholder="뜻이나 기억하고 싶은 내용을 적어 보세요…"
+      >${escapeHTML(word.description)}</textarea>
+    </div>
+
+    <div class="form-field">
+      <label class="field-label" for="${idPrefix}-tags">
+        태그 <span class="optional-label">(쉼표 또는 #으로 구분)</span>
+      </label>
+      <input
+        class="field-input"
+        id="${idPrefix}-tags"
+        name="tags"
+        list="${idPrefix}-known-tags"
+        value="${escapeHTML(word.tags.join(", "))}"
+        placeholder="언어, 감정 # 자연"
+      />
+      <datalist id="${idPrefix}-known-tags">
+        ${allTags().map((tag) => `
+          <option value="${escapeHTML(tag)}"></option>
+        `).join("")}
+      </datalist>
+      <small>
+        쉼표, #, 줄바꿈으로 나눠 입력할 수 있어요. 대소문자가 달라도 같은 태그로 취급합니다.
+      </small>
+    </div>
+
+    <div class="form-field">
+      <span class="field-label">
+        폴더 <span class="optional-label">(여러 개 선택 가능)</span>
+      </span>
+      <div class="folder-checks">${folderChecks}</div>
+      <button
+        type="button"
+        class="text-link folder-create-link"
+        data-action="new-folder-from-word"
+      >＋ 폴더 만들기</button>
+    </div>
+  `;
+}
+
+function restoreWordFormDraft(form, draft, selectedFolderIds) {
+  if (!form) return;
+  form.querySelector('[name="name"]').value = draft.name;
+  form.querySelector('[name="description"]').value = draft.description;
+  form.querySelector('[name="tags"]').value = draft.tags;
+  const checks = form.querySelector(".folder-checks");
+  if (checks) checks.innerHTML = renderWordFolderChoices(selectedFolderIds);
+}
+
+function renderWordDetailEditor(word) {
+  return `
+    <form
+      class="word-detail-editor"
+      data-form="word"
+      data-inline="true"
+      data-id="${escapeHTML(word.id)}"
+    >
+      <div class="modal-header">
+        <div>
+          <h2>단어 수정</h2>
+          <p>기억해 두고 싶은 단어와 생각을 저장하세요.</p>
+        </div>
+      </div>
+
+      <div class="modal-body">
+        ${renderWordFormFields(word, "word-detail")}
+      </div>
+
+      <div class="modal-footer">
+        <button
+          class="button button-quiet"
+          type="button"
+          data-action="cancel-word-edit"
+        >취소</button>
+        <button class="button button-primary" type="submit">
+          변경 사항 저장
+        </button>
+      </div>
+    </form>`;
+}
+
 function renderWordDetail() {
   const word = getWord(currentWordId);
   if (!word) return "";
@@ -787,13 +913,15 @@ function renderWordDetail() {
       `).join("")}</div>`
     : `<div class="chip-row word-detail-folders"><span class="field-help">미분류</span></div>`;
 
+  const summaryMarkup = `
+    <div class="word-detail-summary">
+      ${descriptionMarkup}
+      ${tagsMarkup}
+      ${foldersMarkup}
+    </div>`;
+
   return `
     <section class="section word-detail-view">
-      <div class="word-detail-summary">
-        ${descriptionMarkup}
-        ${tagsMarkup}
-        ${foldersMarkup}
-      </div>
       <div class="folder-detail-toolbar word-detail-toolbar">
         <div>
           <h2>단어 정보</h2>
@@ -808,8 +936,9 @@ function renderWordDetail() {
           <button
             class="button button-quiet button-small"
             type="button"
-            data-action="edit-word"
+            data-action="edit-word-inline"
             data-id="${escapeHTML(word.id)}"
+            ${wordDetailEditing ? "hidden" : ""}
           >단어 수정</button>
           <button
             class="button button-danger button-small"
@@ -819,6 +948,7 @@ function renderWordDetail() {
           >단어 삭제</button>
         </div>
       </div>
+      ${wordDetailEditing ? renderWordDetailEditor(word) : summaryMarkup}
     </section>`;
 }
 
@@ -1450,21 +1580,6 @@ function openModal(kind, id = null) {
       tags: [],
       folderIds: defaultFolderIds,
     };
-    const folderChecks = state.folders.length
-      ? state.folders.map((folder) =>
-        `
-          <label class="checkline folder-choice">
-            <input
-              type="checkbox"
-              name="folderIds"
-              value="${escapeHTML(folder.id)}"
-              ${(word.folderIds || []).includes(folder.id) ? "checked" : ""}
-            />
-            <span>${escapeHTML(folder.name)}</span>
-          </label>
-        `
-      ).join("")
-      : `<span class="field-help">이 단어는 미분류로 저장돼요. 나중에 폴더에 추가할 수 있습니다.</span>`;
     const wordTitle = existing ? "단어 수정" : "단어 추가";
     const submitLabel = existing ? "변경 사항 저장" : "단어 추가";
 
@@ -1485,66 +1600,7 @@ function openModal(kind, id = null) {
           </div>
 
           <div class="modal-body">
-            <div class="form-field">
-              <label class="field-label required" for="word-name">단어</label>
-              <input
-                class="field-input"
-                id="word-name"
-                name="name"
-                required
-                maxlength="120"
-                autofocus
-                value="${escapeHTML(word.name)}"
-                placeholder="예: 설렘"
-              />
-            </div>
-
-            <div class="form-field">
-              <label class="field-label" for="word-description">
-                설명 <span class="optional-label">(선택)</span>
-              </label>
-              <textarea
-                class="field-textarea"
-                id="word-description"
-                name="description"
-                maxlength="1000"
-                placeholder="뜻이나 기억하고 싶은 내용을 적어 보세요…"
-              >${escapeHTML(word.description)}</textarea>
-            </div>
-
-            <div class="form-field">
-              <label class="field-label" for="word-tags">
-                태그 <span class="optional-label">(쉼표 또는 #으로 구분)</span>
-              </label>
-              <input
-                class="field-input"
-                id="word-tags"
-                name="tags"
-                list="known-tags"
-                value="${escapeHTML(word.tags.join(", "))}"
-                placeholder="언어, 감정 # 자연"
-              />
-              <datalist id="known-tags">
-                ${allTags().map((tag) => `
-                  <option value="${escapeHTML(tag)}"></option>
-                `).join("")}
-              </datalist>
-              <small>
-                쉼표, #, 줄바꿈으로 나눠 입력할 수 있어요. 대소문자가 달라도 같은 태그로 취급합니다.
-              </small>
-            </div>
-
-            <div class="form-field">
-              <span class="field-label">
-                폴더 <span class="optional-label">(여러 개 선택 가능)</span>
-              </span>
-              <div class="folder-checks">${folderChecks}</div>
-              <button
-                type="button"
-                class="text-link folder-create-link"
-                data-action="new-folder-from-word"
-              >＋ 폴더 만들기</button>
-            </div>
+            ${renderWordFormFields(word, "word", true)}
           </div>
 
           <div class="modal-footer">
@@ -1738,7 +1794,9 @@ function saveWordForm(form) {
     state.words = state.words.map((item) => item.id === old.id ? word : item);
   } else state.words.unshift(word);
   state.settings.lastWordFolderIds = word.folderIds;
-  closeModal();
+  const inlineEdit = form.dataset.inline === "true";
+  if (inlineEdit) wordDetailEditing = false;
+  else closeModal();
   saveState();
   render();
   toast(old ? "단어를 수정했어요." : "보관함에 단어를 추가했어요.");
@@ -2212,6 +2270,7 @@ async function handleImport(file) {
 }
 
 function syncRouteFromHash() {
+  wordDetailEditing = false;
   const hash = location.hash.slice(1);
   const folderRoute = hash.match(/^folder\/(.*)$/);
   const wordRoute = hash.match(/^word\/(.*)$/);
@@ -2252,6 +2311,7 @@ function navigateToFolder(id) {
   currentView = "folder";
   currentFolderId = folder.id;
   currentWordId = null;
+  wordDetailEditing = false;
   browser.folderId = folder.id;
   const route = `#folder/${encodeURIComponent(folder.id)}`;
   if (location.hash !== route) location.hash = route;
@@ -2268,6 +2328,7 @@ function navigateToWord(id) {
   currentView = "word";
   currentFolderId = null;
   currentWordId = word.id;
+  wordDetailEditing = false;
   browser.folderId = "all";
   const route = `#word/${encodeURIComponent(word.id)}`;
   if (location.hash !== route) location.hash = route;
@@ -2279,6 +2340,7 @@ function navigateToWord(id) {
 
 function navigate(view) {
   if (!titles[view]) return;
+  wordDetailEditing = false;
   if (location.hash !== `#${view}`) location.hash = view;
   else {
     currentView = view;
@@ -2309,22 +2371,33 @@ document.addEventListener("click", async (event) => {
   if (action === "new-word") openModal("word");
   else if (action === "new-folder") openModal("folder");
   else if (action === "new-folder-from-word") {
-    const form = $("form[data-form=word]"),
-      name = $("#word-name")?.value,
-      description = $("#word-description")?.value,
-      tags = $("#word-tags")?.value,
-      selected = [...form.querySelectorAll('input[name="folderIds"]:checked')]
-        .map((item) => item.value);
+    const form = $("form[data-form=word]");
+    if (!form) return;
+    const name = form.querySelector('[name="name"]')?.value;
+    const description = form.querySelector('[name="description"]')?.value;
+    const tags = form.querySelector('[name="tags"]')?.value;
+    const selected = [
+      ...form.querySelectorAll('input[name="folderIds"]:checked'),
+    ].map((item) => item.value);
+    const inline = form.dataset.inline === "true";
     openModal("folder");
     setTimeout(() => {
       const folderForm = $("form[data-form=folder]");
       folderForm.dataset.returnToWord = "true";
+      folderForm.dataset.wordInline = String(inline);
       folderForm.dataset.wordId = form.dataset.id || "";
       folderForm.dataset.wordName = name || "";
       folderForm.dataset.wordDescription = description || "";
       folderForm.dataset.wordTags = tags || "";
       folderForm.dataset.selectedFolders = selected.join(",");
     }, 0);
+  } else if (action === "edit-word-inline") {
+    wordDetailEditing = true;
+    render();
+    $("#word-detail-name")?.focus();
+  } else if (action === "cancel-word-edit") {
+    wordDetailEditing = false;
+    render();
   } else if (action === "edit-word") openModal("word", id);
   else if (action === "edit-folder") openModal("folder", id);
   else if (action === "delete-word") await deleteWord(id);
@@ -2497,6 +2570,7 @@ document.addEventListener("submit", (event) => {
         description: form.dataset.wordDescription,
         tags: form.dataset.wordTags,
         folders: form.dataset.selectedFolders?.split(",").filter(Boolean) || [],
+        inline: form.dataset.wordInline === "true",
       }
       : null;
     const data = formData(form);
@@ -2516,28 +2590,28 @@ document.addEventListener("submit", (event) => {
     if (returnToWord) {
       const selected = [...wordDraft.folders, created.id];
       closeModal();
-      openModal("word", wordDraft.id);
-      setTimeout(() => {
-        const wordForm = $("form[data-form=word]");
-        if (!wordForm) return;
-        $("#word-name").value = wordDraft.name;
-        $("#word-description").value = wordDraft.description;
-        $("#word-tags").value = wordDraft.tags;
-        const checks = wordForm.querySelector(".folder-checks");
-        checks.innerHTML = state.folders.map((folder) =>
-          `<label class="checkline folder-choice"><input type="checkbox" name="folderIds" value="${
-            escapeHTML(folder.id)
-          }" ${selected.includes(folder.id) ? "checked" : ""} /><span>${
-            escapeHTML(folder.name)
-          }</span></label>`
-        ).join("");
-      }, 0);
-    } else saveFolderForm(form);
-    if (returnToWord) {
       state.folders.push(created);
       saveState();
-      render();
-    }
+      if (wordDraft.inline) {
+        wordDetailEditing = true;
+        render();
+        restoreWordFormDraft(
+          $("form[data-form=word]"),
+          wordDraft,
+          selected,
+        );
+      } else {
+        render();
+        openModal("word", wordDraft.id);
+        setTimeout(() => {
+          restoreWordFormDraft(
+            $("form[data-form=word]"),
+            wordDraft,
+            selected,
+          );
+        }, 0);
+      }
+    } else saveFolderForm(form);
   } else if (form.dataset.form === "tag") {
     const name = String(new FormData(form).get("name") || "");
     renameTag(form.dataset.tag, name);
