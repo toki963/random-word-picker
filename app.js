@@ -53,6 +53,7 @@ let browser = {
 };
 let tagSearch = "";
 let tagFilterOpen = false;
+let confirmationResolver = null;
 
 // 작은 DOM 도우미를 사용해 화면 코드의 반복을 줄입니다.
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -111,6 +112,25 @@ const formatDate = (value) => {
       .format(date);
 };
 const plural = (count, unit) => `${count}${unit}`;
+const MIN_MULTIPLIER = 0.1;
+const MAX_MULTIPLIER = 10;
+const MULTIPLIER_STEP = 0.1;
+
+function normalizeMultiplier(value) {
+  if (value === null || value === undefined || String(value).trim() === "") {
+    return 1;
+  }
+  const numeric = Number(String(value).trim().replace(/^x/i, ""));
+  if (!Number.isFinite(numeric)) return 1;
+  return Math.round(
+    Math.min(MAX_MULTIPLIER, Math.max(MIN_MULTIPLIER, numeric)) * 10,
+  ) / 10;
+}
+
+function formatMultiplier(value) {
+  const normalized = normalizeMultiplier(value);
+  return Number.isInteger(normalized) ? String(normalized) : normalized.toFixed(1);
+}
 
 // 저장 데이터와 가져온 파일을 같은 형태로 정리하고, 잘못된 연결은 제거합니다.
 function normalizeState(input) {
@@ -142,6 +162,7 @@ function normalizeState(input) {
       name: raw.name.trim(),
       description: typeof raw.description === "string" ? raw.description : "",
       tags: uniqueTags(raw.tags),
+      multiplier: normalizeMultiplier(raw.multiplier),
       createdAt: raw.createdAt || timestamp,
       updatedAt: raw.updatedAt || timestamp,
     });
@@ -166,6 +187,7 @@ function normalizeState(input) {
       description: typeof raw.description === "string" ? raw.description : "",
       tags: uniqueTags(raw.tags),
       folderIds,
+      multiplier: normalizeMultiplier(raw.multiplier),
       createdAt: raw.createdAt || timestamp,
       updatedAt: raw.updatedAt || timestamp,
     });
@@ -756,6 +778,129 @@ function renderWordCard(word) {
     </article>`;
 }
 
+function renderMultiplierField(value, idPrefix, itemKind) {
+  const multiplier = normalizeMultiplier(value);
+  const description = itemKind === "folder"
+    ? "이 폴더에 담긴 단어의 가중치에 반영돼요."
+    : "x0.1까지 낮춰도 뽑힐 가능성은 남습니다.";
+
+  return `
+    <div class="form-field">
+      <label class="field-label" for="${idPrefix}-multiplier">뽑기 배율</label>
+      <div class="multiplier-control">
+        <button
+          class="multiplier-stepper"
+          type="button"
+          data-action="adjust-multiplier"
+          data-delta="-${MULTIPLIER_STEP}"
+          aria-label="배율 낮추기"
+          ${multiplier <= MIN_MULTIPLIER ? "disabled" : ""}
+        >−</button>
+        <label class="multiplier-value">
+          <span aria-hidden="true">x</span>
+          <input
+            class="field-input"
+            id="${idPrefix}-multiplier"
+            name="multiplier"
+            data-multiplier
+            type="number"
+            min="${MIN_MULTIPLIER}"
+            max="${MAX_MULTIPLIER}"
+            step="${MULTIPLIER_STEP}"
+            inputmode="decimal"
+            value="${formatMultiplier(multiplier)}"
+            aria-label="뽑기 배율"
+            required
+          />
+        </label>
+        <button
+          class="multiplier-stepper"
+          type="button"
+          data-action="adjust-multiplier"
+          data-delta="${MULTIPLIER_STEP}"
+          aria-label="배율 높이기"
+          ${multiplier >= MAX_MULTIPLIER ? "disabled" : ""}
+        >＋</button>
+      </div>
+      <small>${description} 범위는 x0.1부터 x10까지, 0.1 단위예요.</small>
+    </div>`;
+}
+
+function syncMultiplierButtons(form) {
+  const input = form?.querySelector('input[name="multiplier"]');
+  const value = Number(input?.value);
+  if (!Number.isFinite(value)) return;
+  const lowerButton = form.querySelector(
+    '[data-action="adjust-multiplier"][data-delta^="-"]',
+  );
+  const higherButton = form.querySelector(
+    '[data-action="adjust-multiplier"][data-delta]:not([data-delta^="-"])',
+  );
+  if (lowerButton) lowerButton.disabled = value <= MIN_MULTIPLIER;
+  if (higherButton) higherButton.disabled = value >= MAX_MULTIPLIER;
+}
+
+function renderTagEditorChips(tags) {
+  return uniqueTags(tags).map((tag, index) => `
+    <button
+      class="tag-editor-chip"
+      type="button"
+      data-action="remove-form-tag"
+      data-tag-index="${index}"
+      aria-label="${escapeHTML(tag)} 태그 삭제"
+    ># ${escapeHTML(tag)} <span aria-hidden="true">×</span></button>
+  `).join("");
+}
+
+function renderTagEntryField(tags, idPrefix, placeholder) {
+  const safeTags = uniqueTags(tags);
+  return `
+    <input
+      type="hidden"
+      name="tags"
+      value="${escapeHTML(safeTags.join(", "))}"
+    />
+    <input
+      class="field-input"
+      id="${idPrefix}-tags"
+      data-tag-entry
+      list="${idPrefix}-known-tags"
+      placeholder="${escapeHTML(placeholder)}"
+      autocomplete="off"
+    />
+    <datalist id="${idPrefix}-known-tags">
+      ${allTags().map((tag) => `
+        <option value="${escapeHTML(tag)}"></option>
+      `).join("")}
+    </datalist>
+    <div class="tag-editor-chips" data-tag-chip-list ${safeTags.length ? "" : "hidden"}>
+      ${renderTagEditorChips(safeTags)}
+    </div>
+    <small>Enter로 하나씩 추가하고, 쉼표나 #으로 여러 태그를 한 번에 입력할 수 있어요.</small>
+  `;
+}
+
+function setFormTags(form, tags) {
+  const safeTags = uniqueTags(tags);
+  const hiddenInput = form.querySelector('input[name="tags"]');
+  const chipList = form.querySelector("[data-tag-chip-list]");
+  if (!hiddenInput || !chipList) return;
+  hiddenInput.value = safeTags.join(", ");
+  chipList.innerHTML = renderTagEditorChips(safeTags);
+  chipList.hidden = safeTags.length === 0;
+}
+
+function commitTagEntry(form) {
+  const entry = form?.querySelector("[data-tag-entry]");
+  const hiddenInput = form?.querySelector('input[name="tags"]');
+  if (!entry || !hiddenInput) return;
+  const additions = parseTags(entry.value);
+  if (additions.length) {
+    setFormTags(form, [...parseTags(hiddenInput.value), ...additions]);
+  }
+  entry.value = "";
+}
+
 function renderWordFolderChoices(selectedFolderIds = []) {
   return state.folders.length
     ? state.folders.map((folder) => `
@@ -790,6 +935,8 @@ function renderWordFormFields(word, idPrefix = "word", autofocus = false) {
       />
     </div>
 
+    ${renderMultiplierField(word.multiplier, idPrefix, "word")}
+
     <div class="form-field">
       <label class="field-label" for="${idPrefix}-description">
         설명 <span class="optional-label">(선택)</span>
@@ -805,24 +952,9 @@ function renderWordFormFields(word, idPrefix = "word", autofocus = false) {
 
     <div class="form-field">
       <label class="field-label" for="${idPrefix}-tags">
-        태그 <span class="optional-label">(쉼표 또는 #으로 구분)</span>
+        태그
       </label>
-      <input
-        class="field-input"
-        id="${idPrefix}-tags"
-        name="tags"
-        list="${idPrefix}-known-tags"
-        value="${escapeHTML(word.tags.join(", "))}"
-        placeholder="언어, 감정 # 자연"
-      />
-      <datalist id="${idPrefix}-known-tags">
-        ${allTags().map((tag) => `
-          <option value="${escapeHTML(tag)}"></option>
-        `).join("")}
-      </datalist>
-      <small>
-        쉼표, #, 줄바꿈으로 나눠 입력할 수 있어요. 대소문자가 달라도 같은 태그로 취급합니다.
-      </small>
+      ${renderTagEntryField(word.tags, idPrefix, "언어, 감정 # 자연")}
     </div>
 
     <div class="form-field">
@@ -843,7 +975,12 @@ function restoreWordFormDraft(form, draft, selectedFolderIds) {
   if (!form) return;
   form.querySelector('[name="name"]').value = draft.name;
   form.querySelector('[name="description"]').value = draft.description;
-  form.querySelector('[name="tags"]').value = draft.tags;
+  const multiplier = form.querySelector('[name="multiplier"]');
+  if (multiplier) {
+    multiplier.value = formatMultiplier(draft.multiplier ?? 1);
+    syncMultiplierButtons(form);
+  }
+  setFormTags(form, parseTags(draft.tags));
   const checks = form.querySelector(".folder-checks");
   if (checks) checks.innerHTML = renderWordFolderChoices(selectedFolderIds);
 }
@@ -870,13 +1007,21 @@ function renderWordDetailEditor(word) {
 
       <div class="modal-footer">
         <button
-          class="button button-quiet"
+          class="button button-danger"
           type="button"
-          data-action="cancel-word-edit"
-        >취소</button>
-        <button class="button button-primary" type="submit">
-          변경 사항 저장
-        </button>
+          data-action="delete-word"
+          data-id="${escapeHTML(word.id)}"
+        >단어 삭제</button>
+        <div class="editor-footer-actions">
+          <button
+            class="button button-quiet"
+            type="button"
+            data-action="cancel-word-edit"
+          >취소</button>
+          <button class="button button-primary" type="submit">
+            변경 사항 저장
+          </button>
+        </div>
       </div>
     </form>`;
 }
@@ -924,18 +1069,6 @@ function renderWordDetail() {
             type="button"
             data-action="back-to-words"
           >← 모든 단어</button>
-          <button
-            class="button button-quiet button-small"
-            type="button"
-            data-action="focus-word-edit"
-            data-id="${escapeHTML(word.id)}"
-          >단어 수정</button>
-          <button
-            class="button button-danger button-small"
-            type="button"
-            data-action="delete-word"
-            data-id="${escapeHTML(word.id)}"
-          >단어 삭제</button>
         </div>
       </div>
       ${summaryMarkup}
@@ -1030,6 +1163,8 @@ function renderFolderFormFields(folder, idPrefix = "folder") {
       />
     </div>
 
+    ${renderMultiplierField(folder.multiplier, idPrefix, "folder")}
+
     <div class="form-field">
       <label class="field-label" for="${idPrefix}-description">
         설명 <span class="optional-label">(선택)</span>
@@ -1045,21 +1180,9 @@ function renderFolderFormFields(folder, idPrefix = "folder") {
 
     <div class="form-field">
       <label class="field-label" for="${idPrefix}-tags">
-        태그 <span class="optional-label">(쉼표 또는 #으로 구분)</span>
+        태그
       </label>
-      <input
-        class="field-input"
-        id="${idPrefix}-tags"
-        name="tags"
-        list="${idPrefix}-known-tags"
-        value="${escapeHTML(folder.tags.join(", "))}"
-        placeholder="창작, 즐겨찾기"
-      />
-      <datalist id="${idPrefix}-known-tags">
-        ${allTags().map((tag) => `
-          <option value="${escapeHTML(tag)}"></option>
-        `).join("")}
-      </datalist>
+      ${renderTagEntryField(folder.tags, idPrefix, "창작, 즐겨찾기")}
     </div>
   `;
 }
@@ -1136,17 +1259,6 @@ function renderFolderDetail() {
             type="button"
             data-action="back-to-folders"
           >← 폴더 목록</button>
-          <button
-            class="button button-quiet button-small"
-            type="button"
-            data-action="focus-folder-edit"
-            data-id="${escapeHTML(folder.id)}"
-          >폴더 수정</button>
-          <button
-            class="button button-primary button-small"
-            type="button"
-            data-action="new-word"
-          >＋ 단어 추가</button>
         </div>
       </div>
       ${renderFolderDetailEditor(folder)}
@@ -1306,6 +1418,40 @@ function pickerCandidates() {
   return [...new Map(candidates.map((word) => [word.id, word])).values()];
 }
 
+function effectiveWordMultiplier(word) {
+  const wordMultiplier = normalizeMultiplier(word.multiplier);
+  const wordFolderIds = folderIdsOf(word);
+  if (!wordFolderIds.length) return wordMultiplier;
+
+  const scopedFolderIds = picker.mode === "folders" || picker.mode === "combined"
+    ? picker.folderIds.filter((id) => wordFolderIds.includes(id))
+    : wordFolderIds;
+  const folderMultipliers = scopedFolderIds.map((id) =>
+    normalizeMultiplier(getFolder(id)?.multiplier)
+  );
+  if (!folderMultipliers.length) return wordMultiplier;
+
+  // 여러 폴더에 든 단어는 폴더 수만큼 가중치가 중복되지 않도록 평균을 씁니다.
+  const folderMultiplier = folderMultipliers.reduce((sum, value) => sum + value, 0) /
+    folderMultipliers.length;
+  return wordMultiplier * folderMultiplier;
+}
+
+function chooseWeightedWord(candidates) {
+  // 각 단어의 가중치를 전체 합으로 나누는 룰렛 방식으로 하나를 고릅니다.
+  const total = candidates.reduce(
+    (sum, word) => sum + effectiveWordMultiplier(word),
+    0,
+  );
+  let position = Math.random() * total;
+
+  for (const word of candidates) {
+    position -= effectiveWordMultiplier(word);
+    if (position < 0) return word;
+  }
+  return candidates[candidates.length - 1];
+}
+
 function renderPicker() {
   const candidates = pickerCandidates();
   const quantity = Number(picker.quantity);
@@ -1431,6 +1577,9 @@ function renderPicker() {
         <section class="panel picker-panel">
           <h2>뽑기 설정</h2>
           <p>조건에 맞는 단어를 모아 두고, 무작위로 골라 보세요.</p>
+          <p class="picker-weight-note">
+            단어 배율과 소속 폴더 배율을 곱하고, 후보 전체 배율의 합으로 나눠요. 여러 폴더에 든 단어는 폴더 배율의 평균을 써요.
+          </p>
 
           <div class="form-field">
             <label for="picker-mode">선택 방식</label>
@@ -1558,7 +1707,7 @@ function renderSettings() {
           <div class="settings-action">
             <div>
               <strong>Excel 백업</strong>
-              <small>단어, 폴더, 태그와 연결 정보를 워크시트별로 저장합니다.</small>
+               <small>단어, 폴더, 태그, 배율과 연결 정보를 워크시트별로 저장합니다.</small>
             </div>
             <div class="settings-button-group">
               <button
@@ -1645,6 +1794,7 @@ function openModal(kind, id = null) {
       description: "",
       tags: [],
       folderIds: defaultFolderIds,
+      multiplier: 1,
     };
     const wordTitle = existing ? "단어 수정" : "단어 추가";
     const submitLabel = existing ? "변경 사항 저장" : "단어 추가";
@@ -1683,7 +1833,12 @@ function openModal(kind, id = null) {
       `,
     );
   } else if (kind === "folder") {
-    const folder = existing || { name: "", description: "", tags: [] };
+    const folder = existing || {
+      name: "",
+      description: "",
+      tags: [],
+      multiplier: 1,
+    };
     const folderTitle = existing ? "폴더 수정" : "폴더 만들기";
     const submitLabel = existing ? "변경 사항 저장" : "폴더 만들기";
 
@@ -1783,8 +1938,47 @@ function showModal(content) {
   `;
 }
 
+function askForConfirmation(title, message, confirmLabel = "확인") {
+  return new Promise((resolve) => {
+    confirmationResolver = resolve;
+    showModal(`
+      <div class="modal-header">
+        <div><h2>${escapeHTML(title)}</h2></div>
+        <button
+          class="icon-button"
+          type="button"
+          aria-label="닫기"
+          data-action="close-modal"
+        >×</button>
+      </div>
+      <div class="modal-body">
+        <p class="confirmation-message">${escapeHTML(message)}</p>
+      </div>
+      <div class="modal-footer">
+        <button class="button button-quiet" type="button" data-action="cancel-confirmation">
+          취소
+        </button>
+        <button class="button button-danger" type="button" data-action="accept-confirmation">
+          ${escapeHTML(confirmLabel)}
+        </button>
+      </div>
+    `);
+  });
+}
+
+function resolveConfirmation(confirmed) {
+  const resolve = confirmationResolver;
+  if (!resolve) return;
+  confirmationResolver = null;
+  closeModal();
+  resolve(confirmed);
+}
+
 function closeModal() {
+  const pendingConfirmation = confirmationResolver;
+  confirmationResolver = null;
   $("#modal-root").innerHTML = "";
+  pendingConfirmation?.(false);
 }
 
 function formData(form) {
@@ -1810,6 +2004,7 @@ function saveWordForm(form) {
     description: String(data.get("description") || "").trim(),
     tags: parseTags(data.get("tags")),
     folderIds: [...new Set(folderIds)],
+    multiplier: normalizeMultiplier(data.get("multiplier")),
     createdAt: old?.createdAt || nowISO(),
     updatedAt: nowISO(),
   };
@@ -1839,6 +2034,7 @@ function saveFolderForm(form) {
     name,
     description: String(data.get("description") || "").trim(),
     tags: parseTags(data.get("tags")),
+    multiplier: normalizeMultiplier(data.get("multiplier")),
     createdAt: old?.createdAt || nowISO(),
     updatedAt: nowISO(),
   };
@@ -1900,7 +2096,11 @@ async function deleteWord(id) {
   const word = getWord(id);
   if (
     !word ||
-    !confirm(`“${word.name}” 단어를 삭제할까요? 모든 폴더에서도 제거됩니다.`)
+    !(await askForConfirmation(
+      "단어 삭제",
+      `“${word.name}” 단어를 삭제할까요? 모든 폴더에서도 제거됩니다.`,
+      "삭제",
+    ))
   ) return;
   state.words = state.words.filter((item) => item.id !== id);
   await saveState();
@@ -1912,9 +2112,11 @@ async function deleteFolder(id) {
   const folder = getFolder(id);
   if (
     !folder ||
-    !confirm(
+    !(await askForConfirmation(
+      "폴더 삭제",
       `“${folder.name}” 폴더를 삭제할까요? 폴더 안의 단어는 보관함에 남습니다.`,
-    )
+      "삭제",
+    ))
   ) return;
   state.folders = state.folders.filter((item) => item.id !== id);
   state.words = state.words.map((word) => ({
@@ -1932,9 +2134,11 @@ async function deleteFolder(id) {
 async function deleteTag(tag) {
   const stats = tagStats(tag);
   if (
-    !confirm(
+    !(await askForConfirmation(
+      "태그 삭제",
       `“${tag}” 태그를 단어 ${stats.words}개와 폴더 ${stats.folders}개에서 삭제할까요?`,
-    )
+      "삭제",
+    ))
   ) return;
   const key = tagKey(tag);
   for (const word of state.words) {
@@ -1950,7 +2154,7 @@ async function deleteTag(tag) {
   toast("사용 중인 모든 곳에서 태그를 삭제했어요.");
 }
 
-// 중복을 허용하지 않을 때는 Fisher–Yates 셔플 후 필요한 개수만 가져옵니다.
+// 배율에 비례해 뽑고, 중복을 허용하지 않으면 뽑힌 단어를 후보에서 뺍니다.
 function drawWords() {
   const candidates = pickerCandidates();
   const quantity = Number(picker.quantity);
@@ -1970,18 +2174,16 @@ function drawWords() {
   if (picker.allowDuplicates) {
     selected = Array.from(
       { length: quantity },
-      () => candidates[Math.floor(Math.random() * candidates.length)],
+      () => chooseWeightedWord(candidates),
     );
   } else {
-    const shuffled = [...candidates];
-    for (let index = shuffled.length - 1; index > 0; index--) {
-      const swapIndex = Math.floor(Math.random() * (index + 1));
-      [shuffled[index], shuffled[swapIndex]] = [
-        shuffled[swapIndex],
-        shuffled[index],
-      ];
+    const remaining = [...candidates];
+    selected = [];
+    for (let index = 0; index < quantity; index++) {
+      const word = chooseWeightedWord(remaining);
+      selected.push(word);
+      remaining.splice(remaining.findIndex((item) => item.id === word.id), 1);
     }
-    selected = shuffled.slice(0, quantity);
   }
   picker.results = selected.map((word) => ({ ...word, tags: [...word.tags] }));
   render();
@@ -2048,22 +2250,24 @@ function exportExcel() {
 
   const workbook = XLSX.utils.book_new();
   const sheets = [
-    ["단어", ["ID", "단어", "설명", "태그", "폴더 ID", "생성일", "수정일"],
+    ["단어", ["ID", "단어", "설명", "태그", "배율", "폴더 ID", "생성일", "수정일"],
       state.words.map((word) => [
         word.id,
         word.name,
         word.description,
         word.tags.join(", "),
+        normalizeMultiplier(word.multiplier),
         folderIdsOf(word).join(", "),
         word.createdAt,
         word.updatedAt,
       ])],
-    ["폴더", ["ID", "폴더", "설명", "태그", "생성일", "수정일"],
+    ["폴더", ["ID", "폴더", "설명", "태그", "배율", "생성일", "수정일"],
       state.folders.map((folder) => [
         folder.id,
         folder.name,
         folder.description,
         folder.tags.join(", "),
+        normalizeMultiplier(folder.multiplier),
         folder.createdAt,
         folder.updatedAt,
       ])],
@@ -2116,6 +2320,7 @@ function importExcel(buffer) {
     name: String(cell(row, "폴더", "name", "이름") || ""),
     description: String(cell(row, "설명", "description") || ""),
     tags: parseTags(cell(row, "태그", "tags")),
+    multiplier: normalizeMultiplier(cell(row, "배율", "multiplier", "weight")),
     createdAt: cell(row, "생성일", "createdAt", "created_at"),
     updatedAt: cell(row, "수정일", "updatedAt", "updated_at"),
   }));
@@ -2125,6 +2330,7 @@ function importExcel(buffer) {
     description: String(cell(row, "설명", "description") || ""),
     tags: parseTags(cell(row, "태그", "tags")),
     folderIds: list(cell(row, "폴더 ID", "folderIds", "folder_ids")),
+    multiplier: normalizeMultiplier(cell(row, "배율", "multiplier", "weight")),
     createdAt: cell(row, "생성일", "createdAt", "created_at"),
     updatedAt: cell(row, "수정일", "updatedAt", "updated_at"),
   }));
@@ -2172,6 +2378,7 @@ function importRecords(raw, strategy) {
         ? folder.description
         : "",
       tags: uniqueTags(folder.tags),
+      multiplier: normalizeMultiplier(folder.multiplier),
       createdAt: folder.createdAt || timestamp,
       updatedAt: folder.updatedAt || timestamp,
     });
@@ -2197,6 +2404,7 @@ function importRecords(raw, strategy) {
       folderIds: (Array.isArray(word.folderIds) ? word.folderIds : []).map((
         folderId,
       ) => folderMap.get(String(folderId))).filter(Boolean),
+      multiplier: normalizeMultiplier(word.multiplier),
       createdAt: word.createdAt || timestamp,
       updatedAt: word.updatedAt || timestamp,
     });
@@ -2259,9 +2467,11 @@ async function handleImport(file) {
     }
     if (
       strategy === "replace" &&
-      !confirm(
+      !(await askForConfirmation(
+        "보관함 교체",
         `현재 보관함을 이 파일의 단어 ${raw.words.length}개와 폴더 ${raw.folders.length}개로 바꿀까요? 기존 데이터는 삭제됩니다.`,
-      )
+        "교체",
+      ))
     ) return;
     const summary = importRecords(raw, strategy);
     if (strategy === "replace") {
@@ -2391,9 +2601,11 @@ document.addEventListener("click", async (event) => {
   else if (action === "new-folder-from-word") {
     const form = $("form[data-form=word]");
     if (!form) return;
+    commitTagEntry(form);
     const name = form.querySelector('[name="name"]')?.value;
     const description = form.querySelector('[name="description"]')?.value;
     const tags = form.querySelector('[name="tags"]')?.value;
+    const multiplier = form.querySelector('[name="multiplier"]')?.value;
     const selected = [
       ...form.querySelectorAll('input[name="folderIds"]:checked'),
     ].map((item) => item.value);
@@ -2407,26 +2619,37 @@ document.addEventListener("click", async (event) => {
       folderForm.dataset.wordName = name || "";
       folderForm.dataset.wordDescription = description || "";
       folderForm.dataset.wordTags = tags || "";
+      folderForm.dataset.wordMultiplier = multiplier || "1";
       folderForm.dataset.selectedFolders = selected.join(",");
     }, 0);
-  } else if (action === "focus-word-edit") {
-    const nameField = $("#word-detail-name");
-    nameField?.scrollIntoView({ behavior: "smooth", block: "center" });
-    nameField?.focus({ preventScroll: true });
-  } else if (action === "focus-folder-edit") {
-    const nameField = $("#folder-detail-name");
-    nameField?.scrollIntoView({ behavior: "smooth", block: "center" });
-    nameField?.focus({ preventScroll: true });
+  } else if (action === "adjust-multiplier") {
+    const form = target.closest("form");
+    const input = form?.querySelector('input[name="multiplier"]');
+    if (!input) return;
+    const current = normalizeMultiplier(input.value);
+    const next = normalizeMultiplier(current + Number(target.dataset.delta));
+    input.value = formatMultiplier(next);
+    syncMultiplierButtons(form);
+  } else if (action === "remove-form-tag") {
+    const form = target.closest("form");
+    const hiddenInput = form?.querySelector('input[name="tags"]');
+    const tagIndex = Number(target.dataset.tagIndex);
+    if (!hiddenInput || !Number.isInteger(tagIndex)) return;
+    const tags = parseTags(hiddenInput.value);
+    if (tagIndex < 0 || tagIndex >= tags.length) return;
+    tags.splice(tagIndex, 1);
+    setFormTags(form, tags);
   } else if (action === "cancel-word-edit") {
     render();
   } else if (action === "cancel-folder-edit") {
     render();
   } else if (action === "edit-word") openModal("word", id);
-  else if (action === "edit-folder") openModal("folder", id);
   else if (action === "delete-word") await deleteWord(id);
   else if (action === "delete-folder") await deleteFolder(id);
   else if (action === "rename-tag") openModal("tag", target.dataset.tag);
   else if (action === "delete-tag") await deleteTag(target.dataset.tag);
+  else if (action === "accept-confirmation") resolveConfirmation(true);
+  else if (action === "cancel-confirmation") resolveConfirmation(false);
   else if (action === "close-modal") closeModal();
   else if (action === "backdrop-close" && event.target === target) closeModal();
   else if (action === "open-folder") {
@@ -2473,9 +2696,11 @@ document.addEventListener("click", async (event) => {
   else if (action === "import-data") $("#import-file").click();
   else if (action === "clear-library") {
     if (
-      !confirm(
+      !(await askForConfirmation(
+        "보관함 비우기",
         "이 브라우저에 저장된 모든 단어, 폴더, 태그를 삭제할까요? 필요할 수 있다면 먼저 백업을 내보내세요.",
-      )
+        "모두 삭제",
+      ))
     ) return;
     state.words = [];
     state.folders = [];
@@ -2551,7 +2776,9 @@ document.addEventListener("change", (event) => {
 document.addEventListener("input", (event) => {
   // 다시 그린 검색창에서 입력 위치를 유지해 타이핑이 끊기지 않게 합니다.
   const target = event.target;
-  if (target.id === "word-search") {
+  if (target.matches("[data-multiplier]")) {
+    syncMultiplierButtons(target.form);
+  } else if (target.id === "word-search") {
     browser.search = target.value;
     const start = target.selectionStart;
     const end = target.selectionEnd;
@@ -2583,6 +2810,7 @@ document.addEventListener("submit", (event) => {
   const form = event.target;
   if (!form.matches("[data-form]")) return;
   event.preventDefault();
+  commitTagEntry(form);
   if (form.dataset.form === "word") saveWordForm(form);
   else if (form.dataset.form === "folder") {
     const returnToWord = form.dataset.returnToWord === "true";
@@ -2592,6 +2820,7 @@ document.addEventListener("submit", (event) => {
         name: form.dataset.wordName,
         description: form.dataset.wordDescription,
         tags: form.dataset.wordTags,
+        multiplier: form.dataset.wordMultiplier,
         folders: form.dataset.selectedFolders?.split(",").filter(Boolean) || [],
         inline: form.dataset.wordInline === "true",
       }
@@ -2607,6 +2836,7 @@ document.addEventListener("submit", (event) => {
       name,
       description: String(data.get("description") || "").trim(),
       tags: parseTags(data.get("tags")),
+      multiplier: 1,
       createdAt: nowISO(),
       updatedAt: nowISO(),
     };
@@ -2652,7 +2882,10 @@ $("#menu-toggle").addEventListener("click", () => {
 });
 
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") closeModal();
+  if (event.key === "Enter" && event.target.matches("[data-tag-entry]")) {
+    event.preventDefault();
+    commitTagEntry(event.target.form);
+  } else if (event.key === "Escape") closeModal();
 });
 
 async function init() {
@@ -2663,4 +2896,3 @@ async function init() {
 }
 
 init();
-
